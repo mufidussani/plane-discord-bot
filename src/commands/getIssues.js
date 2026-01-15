@@ -5,7 +5,7 @@ const {
   getPriorityEmoji,
   formatState,
   formatDate,
-  getIssueUrl
+  getIssueUrl,
 } = require("../utils/utils");
 
 module.exports = {
@@ -19,9 +19,9 @@ module.exports = {
         .setRequired(false)
         .addChoices(
           { name: "Backlog", value: "backlog" },
-          { name: "Unstarted", value: "unstarted" },
-          { name: "Started", value: "started" },
-          { name: "Completed", value: "completed" },
+          { name: "Todo", value: "unstarted" },
+          { name: "In Progress", value: "started" },
+          { name: "Done", value: "completed" },
           { name: "Cancelled", value: "cancelled" }
         )
     )
@@ -48,7 +48,7 @@ module.exports = {
       logger.info("Getting issues command initiated", {
         user: interaction.user.tag,
         guild: interaction.guild?.name,
-        filters: { state, priority }
+        filters: { state, priority },
       });
 
       // Show progress
@@ -58,8 +58,8 @@ module.exports = {
             .setTitle("⏳ Fetching Issues...")
             .setDescription("Please wait while the issues are being fetched.")
             .setColor(0xfbbf24)
-            .setTimestamp()
-        ]
+            .setTimestamp(),
+        ],
       });
 
       const response = await planeService.getAllIssues({
@@ -83,7 +83,7 @@ module.exports = {
 
       logger.info("Issues fetched successfully", {
         count: response.results.length,
-        totalCount: response.count
+        totalCount: response.count,
       });
 
       // Create the main embed
@@ -115,7 +115,8 @@ module.exports = {
         issuesEmbed.addFields({
           name: `${issue.formatted_id} ${issue.name}`,
           value: [
-            `**Priority:** ${priorityEmoji} ${issue.priority?.toUpperCase() || "None"
+            `**Priority:** ${priorityEmoji} ${
+              issue.priority?.toUpperCase() || "None"
             }`,
             `**State:** ${stateText}`,
             `**Created:** ${formatDate(issue.created_at)}`,
@@ -131,7 +132,9 @@ module.exports = {
 
       const errorEmbed = new EmbedBuilder()
         .setTitle("❌ Failed to Fetch Issues")
-        .setDescription(error.message || "An unexpected error occurred while fetching issues.")
+        .setDescription(
+          error.message || "An unexpected error occurred while fetching issues."
+        )
         .setColor(0xdc2626)
         .setTimestamp();
 

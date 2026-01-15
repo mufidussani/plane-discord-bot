@@ -137,7 +137,7 @@ const MIME_TYPES = {
  */
 
 const planeApi = axios.create({
-  baseURL: "https://api.plane.so/api/v1",
+  baseURL: "https://plane.pustakadata.id/api/v1",
   headers: {
     "X-API-Key": config.PLANE_API_KEY,
     "Content-Type": "application/json",
@@ -312,7 +312,7 @@ class PlaneService {
       const response = await planeApi.get(
         `/workspaces/${config.WORKSPACE_SLUG}/projects/${
           config.PROJECT_ID
-        }/issues/?${queryParams.toString()}`
+        }/work-items/?${queryParams.toString()}`
       );
 
       if (!response.data || !Array.isArray(response.data.results)) {
@@ -344,7 +344,7 @@ class PlaneService {
     try {
       logger.info("Creating new issue", { title, priority });
       const response = await planeApi.post(
-        `/workspaces/${config.WORKSPACE_SLUG}/projects/${config.PROJECT_ID}/issues/`,
+        `/workspaces/${config.WORKSPACE_SLUG}/projects/${config.PROJECT_ID}/work-items/`,
         {
           name: title,
           description_html: `<p class="editor-paragraph-block">${description}</p>`,
@@ -372,7 +372,7 @@ class PlaneService {
       logger.debug("Fetching issue by ID", { issueId });
       const [issue, states, labels, attachments, project] = await Promise.all([
         planeApi.get(
-          `/workspaces/${config.WORKSPACE_SLUG}/projects/${config.PROJECT_ID}/issues/${issueId}/`
+          `/workspaces/${config.WORKSPACE_SLUG}/projects/${config.PROJECT_ID}/work-items/${issueId}/`
         ),
         this.getStates(),
         this.getLabels(),
@@ -405,7 +405,7 @@ class PlaneService {
     try {
       logger.debug("Fetching issue attachments", { issueId });
       const response = await planeApi.get(
-        `/workspaces/${config.WORKSPACE_SLUG}/projects/${config.PROJECT_ID}/issues/${issueId}/issue-attachments/`
+        `/workspaces/${config.WORKSPACE_SLUG}/projects/${config.PROJECT_ID}/work-items/${issueId}/issue-attachments/`
       );
 
       const attachments = Array.isArray(response.data) ? response.data : [];
@@ -430,7 +430,7 @@ class PlaneService {
       logger.info("Fetching issue by sequence ID", { sequenceId });
       const [issue, states, labels, project] = await Promise.all([
         planeApi.get(
-          `/workspaces/${config.WORKSPACE_SLUG}/issues/${sequenceId}/`
+          `/workspaces/${config.WORKSPACE_SLUG}/work-items/${sequenceId}/`
         ),
         this.getStates(),
         this.getLabels(),
@@ -535,7 +535,7 @@ class PlaneService {
         // Create a direct axios request to match curl command
         uploadCredentialsResponse = await axios({
           method: "post",
-          url: `https://api.plane.so/api/v1/workspaces/${config.WORKSPACE_SLUG}/projects/${config.PROJECT_ID}/issues/${issueId}/issue-attachments/`,
+          url: `https://plane.pustakadata.id/api/v1/workspaces/${config.WORKSPACE_SLUG}/projects/${config.PROJECT_ID}/work-items/${issueId}/issue-attachments/`,
           headers: {
             "Content-Type": "application/json",
             "x-api-key": config.PLANE_API_KEY,
@@ -608,7 +608,7 @@ class PlaneService {
       try {
         const completeResponse = await axios({
           method: "patch",
-          url: `https://api.plane.so/api/v1/workspaces/${config.WORKSPACE_SLUG}/projects/${config.PROJECT_ID}/issues/${issueId}/issue-attachments/${asset_id}`,
+          url: `https://plane.pustakadata.id/api/v1/workspaces/${config.WORKSPACE_SLUG}/projects/${config.PROJECT_ID}/work-items/${issueId}/issue-attachments/${asset_id}`,
           headers: {
             "Content-Type": "application/json",
             "x-api-key": config.PLANE_API_KEY,
