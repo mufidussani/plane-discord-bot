@@ -168,7 +168,7 @@ class PlaneService {
     try {
       logger.debug("Fetching states from API");
       const response = await planeApi.get(
-        `/workspaces/${config.WORKSPACE_SLUG}/projects/${config.PROJECT_ID}/states/`
+        `/workspaces/${config.WORKSPACE_SLUG}/projects/${config.PROJECT_ID}/states/`,
       );
 
       if (!response.data || !response.data.results) {
@@ -206,7 +206,7 @@ class PlaneService {
     try {
       logger.debug("Fetching labels from API");
       const response = await planeApi.get(
-        `/workspaces/${config.WORKSPACE_SLUG}/projects/${config.PROJECT_ID}/labels`
+        `/workspaces/${config.WORKSPACE_SLUG}/projects/${config.PROJECT_ID}/labels`,
       );
       if (!response.data || !response.data.results) {
         logger.error("Invalid labels response", { response: response.data });
@@ -242,7 +242,7 @@ class PlaneService {
     try {
       logger.debug("Fetching project details from API");
       const response = await planeApi.get(
-        `/workspaces/${config.WORKSPACE_SLUG}/projects/${config.PROJECT_ID}/`
+        `/workspaces/${config.WORKSPACE_SLUG}/projects/${config.PROJECT_ID}/`,
       );
       this.projectCache = response.data;
       logger.debug("Project details cached successfully", {
@@ -312,7 +312,7 @@ class PlaneService {
       const response = await planeApi.get(
         `/workspaces/${config.WORKSPACE_SLUG}/projects/${
           config.PROJECT_ID
-        }/work-items/?${queryParams.toString()}`
+        }/issues/?${queryParams.toString()}`,
       );
 
       if (!response.data || !Array.isArray(response.data.results)) {
@@ -344,12 +344,12 @@ class PlaneService {
     try {
       logger.info("Creating new issue", { title, priority });
       const response = await planeApi.post(
-        `/workspaces/${config.WORKSPACE_SLUG}/projects/${config.PROJECT_ID}/work-items/`,
+        `/workspaces/${config.WORKSPACE_SLUG}/projects/${config.PROJECT_ID}/issues/`,
         {
           name: title,
           description_html: `<p class="editor-paragraph-block">${description}</p>`,
           priority,
-        }
+        },
       );
       logger.info("Issue created successfully", {
         issueId: response.data.id,
@@ -372,7 +372,7 @@ class PlaneService {
       logger.debug("Fetching issue by ID", { issueId });
       const [issue, states, labels, attachments, project] = await Promise.all([
         planeApi.get(
-          `/workspaces/${config.WORKSPACE_SLUG}/projects/${config.PROJECT_ID}/work-items/${issueId}/`
+          `/workspaces/${config.WORKSPACE_SLUG}/projects/${config.PROJECT_ID}/issues/${issueId}/`,
         ),
         this.getStates(),
         this.getLabels(),
@@ -405,7 +405,7 @@ class PlaneService {
     try {
       logger.debug("Fetching issue attachments", { issueId });
       const response = await planeApi.get(
-        `/workspaces/${config.WORKSPACE_SLUG}/projects/${config.PROJECT_ID}/work-items/${issueId}/issue-attachments/`
+        `/workspaces/${config.WORKSPACE_SLUG}/projects/${config.PROJECT_ID}/issues/${issueId}/issue-attachments/`,
       );
 
       const attachments = Array.isArray(response.data) ? response.data : [];
@@ -430,7 +430,7 @@ class PlaneService {
       logger.info("Fetching issue by sequence ID", { sequenceId });
       const [issue, states, labels, project] = await Promise.all([
         planeApi.get(
-          `/workspaces/${config.WORKSPACE_SLUG}/work-items/${sequenceId}/`
+          `/workspaces/${config.WORKSPACE_SLUG}/issues/${sequenceId}/`,
         ),
         this.getStates(),
         this.getLabels(),
@@ -482,10 +482,10 @@ class PlaneService {
     if (size > MAX_FILE_SIZE) {
       const error = new Error(
         `File size (${this.formatFileSize(
-          size
+          size,
         )}) exceeds maximum allowed size of ${this.formatFileSize(
-          MAX_FILE_SIZE
-        )}`
+          MAX_FILE_SIZE,
+        )}`,
       );
       logger.error("File size validation failed", {
         size,
@@ -535,7 +535,7 @@ class PlaneService {
         // Create a direct axios request to match curl command
         uploadCredentialsResponse = await axios({
           method: "post",
-          url: `https://plane.pustakadata.id/api/v1/workspaces/${config.WORKSPACE_SLUG}/projects/${config.PROJECT_ID}/work-items/${issueId}/issue-attachments/`,
+          url: `https://plane.pustakadata.id/api/v1/workspaces/${config.WORKSPACE_SLUG}/projects/${config.PROJECT_ID}/issues/${issueId}/issue-attachments/`,
           headers: {
             "Content-Type": "application/json",
             "x-api-key": config.PLANE_API_KEY,
@@ -556,7 +556,7 @@ class PlaneService {
         }
         throw new Error(
           "Failed to get upload credentials: " +
-            (error.response?.data?.error || error.message)
+            (error.response?.data?.error || error.message),
         );
       }
 
@@ -577,7 +577,7 @@ class PlaneService {
       formData.append("x-amz-algorithm", upload_data.fields["x-amz-algorithm"]);
       formData.append(
         "x-amz-credential",
-        upload_data.fields["x-amz-credential"]
+        upload_data.fields["x-amz-credential"],
       );
       formData.append("x-amz-date", upload_data.fields["x-amz-date"]);
       formData.append("policy", upload_data.fields.policy);
@@ -599,7 +599,7 @@ class PlaneService {
         logger.error("Storage upload error", error);
         throw new Error(
           "Failed to upload file to storage: " +
-            (error.response?.data?.error || error.message)
+            (error.response?.data?.error || error.message),
         );
       }
 
@@ -608,7 +608,7 @@ class PlaneService {
       try {
         const completeResponse = await axios({
           method: "patch",
-          url: `https://plane.pustakadata.id/api/v1/workspaces/${config.WORKSPACE_SLUG}/projects/${config.PROJECT_ID}/work-items/${issueId}/issue-attachments/${asset_id}`,
+          url: `https://plane.pustakadata.id/api/v1/workspaces/${config.WORKSPACE_SLUG}/projects/${config.PROJECT_ID}/issues/${issueId}/issue-attachments/${asset_id}`,
           headers: {
             "Content-Type": "application/json",
             "x-api-key": config.PLANE_API_KEY,
@@ -624,7 +624,7 @@ class PlaneService {
         logger.error("Complete upload error", error);
         throw new Error(
           "Failed to complete upload: " +
-            (error.response?.data?.error || error.message)
+            (error.response?.data?.error || error.message),
         );
       }
     } catch (error) {
