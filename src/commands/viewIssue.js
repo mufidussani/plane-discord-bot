@@ -22,7 +22,7 @@ const formatAttachments = (attachments) => {
     const size = planeService.formatFileSize(attachment.attributes.size);
     otherAttachments.push({
       name: attachment.attributes.name,
-      url: `https://plane.pustakadata.id/api/assets/v2/workspaces/${planeService.config.WORKSPACE_SLUG}/projects/${planeService.config.PROJECT_ID}/work-items/${attachment.issue}/attachments/${attachment.id}`,
+      url: `https://plane.pustakadata.id/api/assets/v2/workspaces/${planeService.config.WORKSPACE_SLUG}/projects/${planeService.config.PROJECT_ID}/issues/${attachment.issue}/attachments/${attachment.id}`,
       size: size,
       icon: icon,
     });
@@ -38,16 +38,16 @@ const formatAttachments = (attachments) => {
     parts.push(
       displayAttachments
         .map(
-          (file) => `${file.icon} [${file.name}](${file.url}) (${file.size})`
+          (file) => `${file.icon} [${file.name}](${file.url}) (${file.size})`,
         )
-        .join("\n")
+        .join("\n"),
     );
 
     if (remainingCount > 0) {
       parts.push(
         `\n📎 +${remainingCount} more attachment${
           remainingCount === 1 ? "" : "s"
-        }`
+        }`,
       );
     }
   }
@@ -76,7 +76,7 @@ module.exports = {
       option
         .setName("id")
         .setDescription("The sequence ID of the issue (e.g., PROJ-123)")
-        .setRequired(true)
+        .setRequired(true),
     ),
 
   async execute(interaction) {
@@ -97,7 +97,7 @@ module.exports = {
           new EmbedBuilder()
             .setTitle("⏳ Fetching Issue...")
             .setDescription(
-              "Please wait while the issue details are being fetched."
+              "Please wait while the issue details are being fetched.",
             )
             .setColor(0xfbbf24)
             .setTimestamp(),
@@ -115,7 +115,7 @@ module.exports = {
       const issueUrl = getIssueUrl(
         planeService.config.WORKSPACE_SLUG,
         planeService.config.PROJECT_ID,
-        issue.id
+        issue.id,
       );
 
       // Main embed with issue details
@@ -140,7 +140,7 @@ module.exports = {
           }`,
           `**State:** ${formatState(
             issue.state_detail?.name,
-            issue.state_detail?.group
+            issue.state_detail?.group,
           )}`,
         ].join("\n"),
         inline: false,
@@ -209,7 +209,7 @@ module.exports = {
         .setTitle("❌ Failed to View Issue")
         .setDescription(
           error.message ||
-            "An unexpected error occurred while fetching the issue."
+            "An unexpected error occurred while fetching the issue.",
         )
         .setColor(0xdc2626)
         .setTimestamp();
