@@ -1,5 +1,4 @@
 const { SlashCommandBuilder, EmbedBuilder } = require("discord.js");
-const planeService = require("../services/planeApi");
 const logger = require("../utils/logger");
 const {
   getPriorityEmoji,
@@ -22,8 +21,8 @@ module.exports = {
           { name: "Todo", value: "unstarted" },
           { name: "In Progress", value: "started" },
           { name: "Done", value: "completed" },
-          { name: "Cancelled", value: "cancelled" }
-        )
+          { name: "Cancelled", value: "cancelled" },
+        ),
     )
     .addStringOption((option) =>
       option
@@ -34,11 +33,29 @@ module.exports = {
           { name: "Urgent", value: "urgent" },
           { name: "High", value: "high" },
           { name: "Medium", value: "medium" },
-          { name: "Low", value: "low" }
-        )
+          { name: "Low", value: "low" },
+        ),
     ),
 
-  async execute(interaction) {
+  async execute(interaction, { planeService, channelConfig }) {
+    // Check if channel is configured
+    if (!planeService || !channelConfig) {
+      const notConfiguredEmbed = new EmbedBuilder()
+        .setTitle("⚠️ Channel Not Configured")
+        .setDescription(
+          "This channel is not configured for Plane.\n" +
+            "An administrator must use `/plane-setup` to configure this channel first.",
+        )
+        .setColor(0xfbbf24)
+        .setTimestamp();
+
+      await interaction.reply({
+        embeds: [notConfiguredEmbed],
+        ephemeral: true,
+      });
+      return;
+    }
+
     await interaction.deferReply();
 
     try {
@@ -48,6 +65,8 @@ module.exports = {
       logger.info("Getting issues command initiated", {
         user: interaction.user.tag,
         guild: interaction.guild?.name,
+        workspace: channelConfig.workspaceSlug,
+        project: channelConfig.projectId,
         filters: { state, priority },
       });
 
@@ -72,7 +91,7 @@ module.exports = {
         const noIssuesEmbed = new EmbedBuilder()
           .setTitle("📋 No Issues Found")
           .setDescription(
-            "No issues match your criteria. Try different filters or create a new issue."
+            "No issues match your criteria. Try different filters or create a new issue.",
           )
           .setColor(0x6b7280)
           .setTimestamp();
@@ -104,12 +123,12 @@ module.exports = {
         const issueUrl = getIssueUrl(
           planeService.config.WORKSPACE_SLUG,
           planeService.config.PROJECT_ID,
-          issue.id
+          issue.id,
         );
         const priorityEmoji = getPriorityEmoji(issue.priority);
         const stateText = formatState(
           issue.state_detail?.name,
-          issue.state_detail?.group
+          issue.state_detail?.group,
         );
 
         issuesEmbed.addFields({
@@ -133,7 +152,8 @@ module.exports = {
       const errorEmbed = new EmbedBuilder()
         .setTitle("❌ Failed to Fetch Issues")
         .setDescription(
-          error.message || "An unexpected error occurred while fetching issues."
+          error.message ||
+            "An unexpected error occurred while fetching issues.",
         )
         .setColor(0xdc2626)
         .setTimestamp();
