@@ -168,6 +168,7 @@ class PlaneService {
     this.statesCache = null;
     this.labelsCache = null;
     this.projectCache = null;
+    this.projectMembersCache = null;
 
     logger.debug("PlaneService instance created", {
       workspace: workspaceSlug,
@@ -272,6 +273,230 @@ class PlaneService {
     }
   }
 
+  async getProjectMembers() {
+    if (this.projectMembersCache) {
+      logger.debug("Returning project members from cache");
+      return this.projectMembersCache;
+    }
+
+    const endpoints = [
+      `/workspaces/${this.workspaceSlug}/projects/${this.projectId}/members/`,
+      `/workspaces/${this.workspaceSlug}/projects/${this.projectId}/project-members/`,
+      `/workspaces/${this.workspaceSlug}/projects/${this.projectId}/users/`,
+    ];
+
+    for (const endpoint of endpoints) {
+      try {
+        logger.debug("Fetching project members from API", { endpoint });
+        const response = await planeApi.get(endpoint);
+        const members = Array.isArray(response.data)
+          ? response.data
+          : Array.isArray(response.data?.results)
+            ? response.data.results
+            : Array.isArray(response.data?.members)
+              ? response.data.members
+              : [];
+
+        if (members.length > 0) {
+          this.projectMembersCache = members;
+          logger.debug("Project members cached successfully", {
+            count: this.projectMembersCache.length,
+            endpoint,
+          });
+          return this.projectMembersCache;
+        }
+      } catch (error) {
+        if (error.response?.status !== 404) {
+          logger.warn("Error fetching project members", {
+            endpoint,
+            status: error.response?.status,
+            message: error.message,
+          });
+        }
+      }
+    }
+
+    logger.warn("No project members endpoint returned results", {
+      workspace: this.workspaceSlug,
+      project: this.projectId,
+    });
+    this.projectMembersCache = [];
+    return this.projectMembersCache;
+  }
+
+  getMemberDisplayNames(member) {
+    const names = [
+      member?.name,
+      member?.display_name,
+      member?.displayName,
+      member?.username,
+      member?.user?.name,
+      member?.user?.display_name,
+      member?.user?.displayName,
+      member?.user?.username,
+      member?.user?.email,
+      member?.email,
+    ]
+      .filter(Boolean)
+      .map((value) => String(value).trim())
+      .filter(Boolean);
+
+    if (member?.user?.first_name || member?.user?.last_name) {
+      names.push(
+        [member.user.first_name, member.user.last_name]
+          .filter(Boolean)
+          .join(" ")
+          .trim(),
+      );
+    }
+
+    return [...new Set(names)];
+  }
+
+  getMemberId(member) {
+    return member?.user?.id || member?.id || null;
+  }
+
+  getNormalizedProjectMembers(members) {
+    return members
+      .map((member) => {
+        const id = this.getMemberId(member);
+        if (!id) {
+          return null;
+        }
+
+        const displayNames = this.getMemberDisplayNames(member);
+        const primaryName =
+          displayNames[0] || member?.username || member?.user?.username || id;
+        const username = member?.username || member?.user?.username || "";
+        const email = member?.email || member?.user?.email || "";
+
+        return {
+          id,
+          name: primaryName,
+          username,
+          email,
+          names: displayNames,
+          raw: member,
+        };
+      })
+      .filter(Boolean);
+  }
+
+  async searchProjectMembers(query = "", excludedIds = [], limit = 25) {
+    const members = this.getNormalizedProjectMembers(
+      await this.getProjectMembers(),
+    );
+    const normalizedQuery = query.trim().toLowerCase();
+    const excluded = new Set(excludedIds.map((value) => String(value)));
+
+    return members
+      .filter((member) => !excluded.has(String(member.id)))
+      .filter((member) => {
+        if (!normalizedQuery) {
+          return true;
+        }
+
+        const searchable = [
+          member.name,
+          member.username,
+          member.email,
+          ...member.names,
+        ]
+          .filter(Boolean)
+          .join(" ")
+          .toLowerCase();
+
+        return searchable.includes(normalizedQuery);
+      })
+      .slice(0, limit);
+  }
+
+  async resolveProjectAssigneesWithMembers(assigneeInputs = []) {
+    const inputs = assigneeInputs
+      .map((value) => String(value || "").trim())
+      .filter(Boolean);
+
+    if (inputs.length === 0) {
+      return { assigneeIds: [], members: [] };
+    }
+
+    const normalizedMembers = this.getNormalizedProjectMembers(
+      await this.getProjectMembers(),
+    );
+
+    const memberById = new Map(
+      normalizedMembers.map((member) => [String(member.id), member]),
+    );
+
+    const resolveInput = (input) => {
+      const normalizedInput = input.toLowerCase();
+
+      if (
+        /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+          input,
+        )
+      ) {
+        return input;
+      }
+
+      const exactMatches = normalizedMembers.filter((member) =>
+        member.names.some((name) => name.toLowerCase() === normalizedInput),
+      );
+
+      if (exactMatches.length === 1) {
+        return exactMatches[0].id;
+      }
+
+      if (exactMatches.length > 1) {
+        throw new Error(
+          `Multiple Plane project members match "${input}". Use the assignee dropdown or Plane user UUID.`,
+        );
+      }
+
+      return null;
+    };
+
+    const resolvedAssignees = [];
+    const unresolvedInputs = [];
+
+    for (const input of inputs) {
+      const resolved = resolveInput(input);
+      if (resolved) {
+        resolvedAssignees.push(resolved);
+      } else {
+        unresolvedInputs.push(input);
+      }
+    }
+
+    if (unresolvedInputs.length > 0) {
+      const memberNames = normalizedMembers
+        .slice(0, 10)
+        .map((member) => member.username || member.email || member.name);
+
+      throw new Error(
+        `Could not resolve Plane assignee(s): ${unresolvedInputs.join(
+          ", ",
+        )}. Available project members include: ${
+          memberNames.length > 0 ? memberNames.join(", ") : "none"
+        }.`,
+      );
+    }
+
+    const assigneeIds = [...new Set(resolvedAssignees)];
+    const members = assigneeIds
+      .map((id) => memberById.get(String(id)) || { id, name: id })
+      .filter(Boolean);
+
+    return { assigneeIds, members };
+  }
+
+  async resolveProjectAssignees(assigneeInputs = []) {
+    const { assigneeIds } =
+      await this.resolveProjectAssigneesWithMembers(assigneeInputs);
+    return assigneeIds;
+  }
+
   /**
    * Format issue ID with project identifier
    * @param {number} sequenceId
@@ -354,16 +579,27 @@ class PlaneService {
     }
   }
 
-  async createIssue(title, description, priority) {
+  async createIssue(title, description, priority, assignees = []) {
     try {
-      logger.info("Creating new issue", { title, priority });
+      logger.info("Creating new issue", {
+        title,
+        priority,
+        assignees: assignees.length > 0 ? assignees : "Not provided",
+      });
+
+      const payload = {
+        name: title,
+        description_html: `<p class="editor-paragraph-block">${description}</p>`,
+        priority,
+      };
+
+      if (assignees.length > 0) {
+        payload.assignees = assignees;
+      }
+
       const response = await planeApi.post(
         `/workspaces/${this.workspaceSlug}/projects/${this.projectId}/issues/`,
-        {
-          name: title,
-          description_html: `<p class="editor-paragraph-block">${description}</p>`,
-          priority,
-        },
+        payload,
       );
       logger.info("Issue created successfully", {
         issueId: response.data.id,

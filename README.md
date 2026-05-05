@@ -174,11 +174,15 @@ Create a new issue in Plane.
 - `title` (required): The title of the issue
 - `description` (optional): The description of the issue
 - `priority` (optional): The priority level (Urgent, High, Medium, Low)
+- `assignee` (optional): First assignee from Plane member autocomplete.
+- `assignee-2` to `assignee-5` (optional): Additional assignees from Plane member autocomplete.
+
+When assignees are selected, the bot also tries to auto-mention matching Discord users (by username/display name/email local-part matching).
 
 **Example:**
 
 ```
-/create-issue title: Fix login bug description: Users can't login with Google priority: high
+/create-issue title: Fix login bug description: Users can't login with Google priority: high assignee: 550e8400-e29b-41d4-a716-446655440000 assignee-2: 662e1f72-f58e-4f7f-a128-2e2fbc4d8ea3
 ```
 
 #### `/view-issue`

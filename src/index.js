@@ -48,13 +48,46 @@ client.once(Events.ClientReady, () => {
 
 client.on(Events.InteractionCreate, async (interaction) => {
   try {
+    if (interaction.isAutocomplete()) {
+      const command = client.commands.get(interaction.commandName);
+
+      if (!command || typeof command.autocomplete !== "function") {
+        return;
+      }
+
+      const guildId = interaction.guildId;
+      const channelId = interaction.channelId;
+      let context = {
+        planeService: null,
+        channelConfig: null,
+      };
+
+      if (!ADMIN_COMMANDS.includes(interaction.commandName)) {
+        const channelConfig = await channelConfigManager.getConfig(
+          guildId,
+          channelId,
+        );
+
+        if (channelConfig) {
+          const planeService = planeServiceManager.getService(
+            channelConfig.workspaceSlug,
+            channelConfig.projectId,
+          );
+          context = { planeService, channelConfig };
+        }
+      }
+
+      await command.autocomplete(interaction, context);
+      return;
+    }
+
     // Handle slash commands
     if (interaction.isChatInputCommand()) {
       const command = client.commands.get(interaction.commandName);
 
       if (!command) {
         logger.warn(
-          `No command matching ${interaction.commandName} was found.`
+          `No command matching ${interaction.commandName} was found.`,
         );
         return;
       }
@@ -79,14 +112,14 @@ client.on(Events.InteractionCreate, async (interaction) => {
           // Get channel configuration
           const channelConfig = await channelConfigManager.getConfig(
             guildId,
-            channelId
+            channelId,
           );
 
           if (channelConfig) {
             // Get PlaneService for this workspace/project
             const planeService = planeServiceManager.getService(
               channelConfig.workspaceSlug,
-              channelConfig.projectId
+              channelConfig.projectId,
             );
             context = { planeService, channelConfig };
           }
@@ -99,7 +132,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       } catch (error) {
         logger.error(
           `Error executing command: ${interaction.commandName}`,
-          error
+          error,
         );
         if (interaction.replied || interaction.deferred) {
           await interaction.followUp({
