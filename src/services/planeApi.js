@@ -145,17 +145,34 @@ const planeApi = axios.create({
 });
 
 class PlaneService {
-  constructor() {
+  /**
+   * Create a PlaneService instance for a specific workspace and project.
+   * @param {string} workspaceSlug - The workspace slug
+   * @param {string} projectId - The project ID
+   */
+  constructor(workspaceSlug, projectId) {
+    if (!workspaceSlug || !projectId) {
+      throw new Error("workspaceSlug and projectId are required");
+    }
+
+    this.workspaceSlug = workspaceSlug;
+    this.projectId = projectId;
+
+    // Maintain backward compatibility with existing code that uses this.config
     this.config = {
-      WORKSPACE_SLUG: config.WORKSPACE_SLUG,
-      PROJECT_ID: config.PROJECT_ID,
+      WORKSPACE_SLUG: workspaceSlug,
+      PROJECT_ID: projectId,
     };
+
+    // Instance-specific caches
     this.statesCache = null;
     this.labelsCache = null;
     this.projectCache = null;
-    logger.info("PlaneService initialized", {
-      workspace: config.WORKSPACE_SLUG,
-      project: config.PROJECT_ID,
+    this.projectMembersCache = null;
+
+    logger.debug("PlaneService instance created", {
+      workspace: workspaceSlug,
+      project: projectId,
     });
   }
 
@@ -168,7 +185,7 @@ class PlaneService {
     try {
       logger.debug("Fetching states from API");
       const response = await planeApi.get(
-        `/workspaces/${config.WORKSPACE_SLUG}/projects/${config.PROJECT_ID}/states/`,
+        `/workspaces/${this.workspaceSlug}/projects/${this.projectId}/states/`,
       );
 
       if (!response.data || !response.data.results) {
@@ -206,7 +223,7 @@ class PlaneService {
     try {
       logger.debug("Fetching labels from API");
       const response = await planeApi.get(
-        `/workspaces/${config.WORKSPACE_SLUG}/projects/${config.PROJECT_ID}/labels`,
+        `/workspaces/${this.workspaceSlug}/projects/${this.projectId}/labels`,
       );
       if (!response.data || !response.data.results) {
         logger.error("Invalid labels response", { response: response.data });
@@ -242,7 +259,7 @@ class PlaneService {
     try {
       logger.debug("Fetching project details from API");
       const response = await planeApi.get(
-        `/workspaces/${config.WORKSPACE_SLUG}/projects/${config.PROJECT_ID}/`,
+        `/workspaces/${this.workspaceSlug}/projects/${this.projectId}/`,
       );
       this.projectCache = response.data;
       logger.debug("Project details cached successfully", {
@@ -254,6 +271,308 @@ class PlaneService {
       logger.error("Error fetching project details", error);
       throw error;
     }
+  }
+
+  async getProjectMembers() {
+    if (this.projectMembersCache) {
+      logger.debug("Returning project members from cache");
+      return this.projectMembersCache;
+    }
+
+    const endpoints = [
+      `/workspaces/${this.workspaceSlug}/projects/${this.projectId}/members/`,
+      `/workspaces/${this.workspaceSlug}/projects/${this.projectId}/project-members/`,
+      `/workspaces/${this.workspaceSlug}/projects/${this.projectId}/users/`,
+    ];
+
+    for (const endpoint of endpoints) {
+      try {
+        logger.debug("Fetching project members from API", { endpoint });
+        const response = await planeApi.get(endpoint);
+        const members = Array.isArray(response.data)
+          ? response.data
+          : Array.isArray(response.data?.results)
+            ? response.data.results
+            : Array.isArray(response.data?.members)
+              ? response.data.members
+              : [];
+
+        if (members.length > 0) {
+          this.projectMembersCache = members;
+          logger.debug("Project members cached successfully", {
+            count: this.projectMembersCache.length,
+            endpoint,
+          });
+          return this.projectMembersCache;
+        }
+      } catch (error) {
+        if (error.response?.status !== 404) {
+          logger.warn("Error fetching project members", {
+            endpoint,
+            status: error.response?.status,
+            message: error.message,
+          });
+        }
+      }
+    }
+
+    logger.warn("No project members endpoint returned results", {
+      workspace: this.workspaceSlug,
+      project: this.projectId,
+    });
+    this.projectMembersCache = [];
+    return this.projectMembersCache;
+  }
+
+  getMemberDisplayNames(member) {
+    const names = [
+      member?.name,
+      member?.display_name,
+      member?.displayName,
+      member?.username,
+      member?.user?.name,
+      member?.user?.display_name,
+      member?.user?.displayName,
+      member?.user?.username,
+      member?.user?.email,
+      member?.email,
+    ]
+      .filter(Boolean)
+      .map((value) => String(value).trim())
+      .filter(Boolean);
+
+    if (member?.user?.first_name || member?.user?.last_name) {
+      names.push(
+        [member.user.first_name, member.user.last_name]
+          .filter(Boolean)
+          .join(" ")
+          .trim(),
+      );
+    }
+
+    return [...new Set(names)];
+  }
+
+  getMemberId(member) {
+    return member?.user?.id || member?.id || null;
+  }
+
+  getNormalizedProjectMembers(members) {
+    return members
+      .map((member) => {
+        const id = this.getMemberId(member);
+        if (!id) {
+          return null;
+        }
+
+        const displayNames = this.getMemberDisplayNames(member);
+        const primaryName =
+          displayNames[0] || member?.username || member?.user?.username || id;
+        const username = member?.username || member?.user?.username || "";
+        const email = member?.email || member?.user?.email || "";
+
+        return {
+          id,
+          name: primaryName,
+          username,
+          email,
+          names: displayNames,
+          raw: member,
+        };
+      })
+      .filter(Boolean);
+  }
+
+  getNormalizedLabels(labelsObj) {
+    // Accept either an object map (from getLabels) or an array
+    if (!labelsObj) return [];
+    if (Array.isArray(labelsObj)) {
+      return labelsObj
+        .map((label) => ({
+          id: label.id,
+          name: label.name || label.title || "",
+        }))
+        .filter((l) => l.id && l.name);
+    }
+
+    return Object.keys(labelsObj).map((id) => ({
+      id,
+      name: labelsObj[id].name,
+    }));
+  }
+
+  async searchProjectLabels(query = "", excludedIds = [], limit = 25) {
+    const labelsMap = await this.getLabels();
+    const labels = this.getNormalizedLabels(labelsMap);
+    const normalizedQuery = String(query || "")
+      .trim()
+      .toLowerCase();
+    const excluded = new Set(excludedIds.map((v) => String(v)));
+
+    return labels
+      .filter((label) => !excluded.has(String(label.id)))
+      .filter((label) => {
+        if (!normalizedQuery) return true;
+        return String(label.name || "")
+          .toLowerCase()
+          .includes(normalizedQuery);
+      })
+      .slice(0, limit);
+  }
+
+  async resolveLabelIdsWithLabels(labelInputs = []) {
+    const inputs = labelInputs
+      .map((v) => String(v || "").trim())
+      .filter(Boolean);
+    if (inputs.length === 0) return { labelIds: [], labels: [] };
+
+    const labelsMap = await this.getLabels();
+    const normalizedLabels = this.getNormalizedLabels(labelsMap);
+    const labelById = new Map(normalizedLabels.map((l) => [String(l.id), l]));
+
+    const resolved = [];
+    const unresolved = [];
+
+    for (const input of inputs) {
+      if (
+        /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+          input,
+        )
+      ) {
+        resolved.push(input);
+        continue;
+      }
+
+      const match = normalizedLabels.find(
+        (l) => String(l.name).toLowerCase() === input.toLowerCase(),
+      );
+      if (match) resolved.push(match.id);
+      else unresolved.push(input);
+    }
+
+    if (unresolved.length > 0) {
+      throw new Error(`Could not resolve label(s): ${unresolved.join(", ")}`);
+    }
+
+    const labelIds = [...new Set(resolved)];
+    const labels = labelIds.map(
+      (id) => labelById.get(String(id)) || { id, name: id },
+    );
+    return { labelIds, labels };
+  }
+
+  async searchProjectMembers(query = "", excludedIds = [], limit = 25) {
+    const members = this.getNormalizedProjectMembers(
+      await this.getProjectMembers(),
+    );
+    const normalizedQuery = query.trim().toLowerCase();
+    const excluded = new Set(excludedIds.map((value) => String(value)));
+
+    return members
+      .filter((member) => !excluded.has(String(member.id)))
+      .filter((member) => {
+        if (!normalizedQuery) {
+          return true;
+        }
+
+        const searchable = [
+          member.name,
+          member.username,
+          member.email,
+          ...member.names,
+        ]
+          .filter(Boolean)
+          .join(" ")
+          .toLowerCase();
+
+        return searchable.includes(normalizedQuery);
+      })
+      .slice(0, limit);
+  }
+
+  async resolveProjectAssigneesWithMembers(assigneeInputs = []) {
+    const inputs = assigneeInputs
+      .map((value) => String(value || "").trim())
+      .filter(Boolean);
+
+    if (inputs.length === 0) {
+      return { assigneeIds: [], members: [] };
+    }
+
+    const normalizedMembers = this.getNormalizedProjectMembers(
+      await this.getProjectMembers(),
+    );
+
+    const memberById = new Map(
+      normalizedMembers.map((member) => [String(member.id), member]),
+    );
+
+    const resolveInput = (input) => {
+      const normalizedInput = input.toLowerCase();
+
+      if (
+        /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+          input,
+        )
+      ) {
+        return input;
+      }
+
+      const exactMatches = normalizedMembers.filter((member) =>
+        member.names.some((name) => name.toLowerCase() === normalizedInput),
+      );
+
+      if (exactMatches.length === 1) {
+        return exactMatches[0].id;
+      }
+
+      if (exactMatches.length > 1) {
+        throw new Error(
+          `Multiple Plane project members match "${input}". Use the assignee dropdown or Plane user UUID.`,
+        );
+      }
+
+      return null;
+    };
+
+    const resolvedAssignees = [];
+    const unresolvedInputs = [];
+
+    for (const input of inputs) {
+      const resolved = resolveInput(input);
+      if (resolved) {
+        resolvedAssignees.push(resolved);
+      } else {
+        unresolvedInputs.push(input);
+      }
+    }
+
+    if (unresolvedInputs.length > 0) {
+      const memberNames = normalizedMembers
+        .slice(0, 10)
+        .map((member) => member.username || member.email || member.name);
+
+      throw new Error(
+        `Could not resolve Plane assignee(s): ${unresolvedInputs.join(
+          ", ",
+        )}. Available project members include: ${
+          memberNames.length > 0 ? memberNames.join(", ") : "none"
+        }.`,
+      );
+    }
+
+    const assigneeIds = [...new Set(resolvedAssignees)];
+    const members = assigneeIds
+      .map((id) => memberById.get(String(id)) || { id, name: id })
+      .filter(Boolean);
+
+    return { assigneeIds, members };
+  }
+
+  async resolveProjectAssignees(assigneeInputs = []) {
+    const { assigneeIds } =
+      await this.resolveProjectAssigneesWithMembers(assigneeInputs);
+    return assigneeIds;
   }
 
   /**
@@ -275,12 +594,18 @@ class PlaneService {
    */
   formatIssueData(issue, states, labels) {
     logger.debug("Formatting issue data", { issueId: issue.id });
+    const stateId =
+      typeof issue.state === "object" ? issue.state?.id : issue.state;
     return {
       ...issue,
-      state_detail: states[issue.state] || {
-        name: "Unknown",
-        group: "Unknown",
-      },
+      state_detail:
+        states[stateId] ||
+        (typeof issue.state === "object"
+          ? issue.state
+          : {
+              name: "Unknown",
+              group: "Unknown",
+            }),
       label_details: issue.labels
         .map((id) => labels[id])
         .filter((label) => label),
@@ -298,21 +623,12 @@ class PlaneService {
       ]);
 
       const queryParams = new URLSearchParams({
-        per_page: "10", // Maximum allowed
-        ...filters,
+        per_page: "100", // Maximum allowed
+        order_by: "-created_at",
       });
-      // Add filters if provided
-      if (filters.state)
-        queryParams.append("state__name__icontains", filters.state);
-      if (filters.priority) queryParams.append("priority", filters.priority);
-
-      // Add sorting
-      queryParams.append("order_by", "-created_at"); // Sort by creation date, newest first
 
       const response = await planeApi.get(
-        `/workspaces/${config.WORKSPACE_SLUG}/projects/${
-          config.PROJECT_ID
-        }/issues/?${queryParams.toString()}`,
+        `/workspaces/${this.workspaceSlug}/projects/${this.projectId}/issues/?${queryParams.toString()}`,
       );
 
       if (!response.data || !Array.isArray(response.data.results)) {
@@ -327,12 +643,68 @@ class PlaneService {
         formatted_id: `${project.identifier}-${issue.sequence_id}`,
       }));
 
+      const normalizedFilters = {
+        state: filters.state ? String(filters.state).toLowerCase() : "",
+        priority: filters.priority
+          ? String(filters.priority).toLowerCase()
+          : "",
+        assigneeIds: Array.isArray(filters.assigneeIds)
+          ? filters.assigneeIds.map((value) => String(value))
+          : [],
+      };
+
+      const filteredResults = enhancedResults.filter((issue) => {
+        if (
+          normalizedFilters.state &&
+          String(
+            issue.state_detail?.group || issue.state_detail?.name || "",
+          ).toLowerCase() !== normalizedFilters.state
+        ) {
+          return false;
+        }
+
+        if (
+          normalizedFilters.priority &&
+          String(issue.priority || "").toLowerCase() !==
+            normalizedFilters.priority
+        ) {
+          return false;
+        }
+
+        if (normalizedFilters.assigneeIds.length > 0) {
+          const issueAssigneeIds = Array.isArray(issue.assignees)
+            ? issue.assignees
+                .map((assignee) =>
+                  typeof assignee === "string"
+                    ? assignee
+                    : assignee?.id ||
+                      assignee?.user_id ||
+                      assignee?.userId ||
+                      null,
+                )
+                .filter(Boolean)
+                .map((value) => String(value))
+            : [];
+
+          if (
+            !normalizedFilters.assigneeIds.some((assigneeId) =>
+              issueAssigneeIds.includes(String(assigneeId)),
+            )
+          ) {
+            return false;
+          }
+        }
+
+        return true;
+      });
+
       logger.info("Issues fetched successfully", {
-        count: enhancedResults.length,
+        count: filteredResults.length,
       });
       return {
         ...response.data,
-        results: enhancedResults,
+        count: filteredResults.length,
+        results: filteredResults,
       };
     } catch (error) {
       logger.error("Error fetching all issues", error);
@@ -340,16 +712,40 @@ class PlaneService {
     }
   }
 
-  async createIssue(title, description, priority) {
+  async createIssue(
+    title,
+    description,
+    priority,
+    assignees = [],
+    labels = [],
+    start_date = null,
+    target_date = null,
+  ) {
     try {
-      logger.info("Creating new issue", { title, priority });
+      logger.info("Creating new issue", {
+        title,
+        priority,
+        assignees: assignees.length > 0 ? assignees : "Not provided",
+      });
+
+      const payload = {
+        name: title,
+        description_html: `<p class="editor-paragraph-block">${description}</p>`,
+        priority,
+      };
+
+      if (assignees.length > 0) {
+        payload.assignees = assignees;
+      }
+      if (labels && labels.length > 0) {
+        payload.labels = labels;
+      }
+      if (start_date) payload.start_date = start_date;
+      if (target_date) payload.target_date = target_date;
+
       const response = await planeApi.post(
-        `/workspaces/${config.WORKSPACE_SLUG}/projects/${config.PROJECT_ID}/issues/`,
-        {
-          name: title,
-          description_html: `<p class="editor-paragraph-block">${description}</p>`,
-          priority,
-        },
+        `/workspaces/${this.workspaceSlug}/projects/${this.projectId}/issues/`,
+        payload,
       );
       logger.info("Issue created successfully", {
         issueId: response.data.id,
@@ -372,7 +768,7 @@ class PlaneService {
       logger.debug("Fetching issue by ID", { issueId });
       const [issue, states, labels, attachments, project] = await Promise.all([
         planeApi.get(
-          `/workspaces/${config.WORKSPACE_SLUG}/projects/${config.PROJECT_ID}/issues/${issueId}/`,
+          `/workspaces/${this.workspaceSlug}/projects/${this.projectId}/issues/${issueId}/`,
         ),
         this.getStates(),
         this.getLabels(),
@@ -405,7 +801,7 @@ class PlaneService {
     try {
       logger.debug("Fetching issue attachments", { issueId });
       const response = await planeApi.get(
-        `/workspaces/${config.WORKSPACE_SLUG}/projects/${config.PROJECT_ID}/issues/${issueId}/issue-attachments/`,
+        `/workspaces/${this.workspaceSlug}/projects/${this.projectId}/issues/${issueId}/issue-attachments/`,
       );
 
       const attachments = Array.isArray(response.data) ? response.data : [];
@@ -429,9 +825,7 @@ class PlaneService {
     try {
       logger.info("Fetching issue by sequence ID", { sequenceId });
       const [issue, states, labels, project] = await Promise.all([
-        planeApi.get(
-          `/workspaces/${config.WORKSPACE_SLUG}/issues/${sequenceId}/`,
-        ),
+        planeApi.get(`/workspaces/${this.workspaceSlug}/issues/${sequenceId}/`),
         this.getStates(),
         this.getLabels(),
         this.getProjectDetails(),
@@ -535,7 +929,7 @@ class PlaneService {
         // Create a direct axios request to match curl command
         uploadCredentialsResponse = await axios({
           method: "post",
-          url: `https://plane.pustakadata.id/api/v1/workspaces/${config.WORKSPACE_SLUG}/projects/${config.PROJECT_ID}/issues/${issueId}/issue-attachments/`,
+          url: `https://plane.pustakadata.id/api/v1/workspaces/${this.workspaceSlug}/projects/${this.projectId}/issues/${issueId}/issue-attachments/`,
           headers: {
             "Content-Type": "application/json",
             "x-api-key": config.PLANE_API_KEY,
@@ -608,7 +1002,7 @@ class PlaneService {
       try {
         const completeResponse = await axios({
           method: "patch",
-          url: `https://plane.pustakadata.id/api/v1/workspaces/${config.WORKSPACE_SLUG}/projects/${config.PROJECT_ID}/issues/${issueId}/issue-attachments/${asset_id}`,
+          url: `https://plane.pustakadata.id/api/v1/workspaces/${this.workspaceSlug}/projects/${this.projectId}/issues/${issueId}/issue-attachments/${asset_id}`,
           headers: {
             "Content-Type": "application/json",
             "x-api-key": config.PLANE_API_KEY,
@@ -634,4 +1028,5 @@ class PlaneService {
   }
 }
 
-module.exports = new PlaneService();
+// Export the class itself (not an instance) to support multiple instances
+module.exports = PlaneService;

@@ -1,5 +1,4 @@
 const { SlashCommandBuilder, EmbedBuilder } = require("discord.js");
-const planeService = require("../services/planeApi");
 const logger = require("../utils/logger");
 const {
   getPriorityEmoji,
@@ -7,6 +6,14 @@ const {
   formatDate,
   getIssueUrl,
 } = require("../utils/utils");
+
+const MAX_AUTOCOMPLETE_CHOICES = 25;
+
+function formatAutocompleteChoice(member) {
+  const secondary = member.username || member.email || member.id;
+  const label = `${member.name} (${secondary})`;
+  return label.length > 100 ? `${label.slice(0, 97)}...` : label;
+}
 
 module.exports = {
   data: new SlashCommandBuilder()
@@ -22,8 +29,8 @@ module.exports = {
           { name: "Todo", value: "unstarted" },
           { name: "In Progress", value: "started" },
           { name: "Done", value: "completed" },
-          { name: "Cancelled", value: "cancelled" }
-        )
+          { name: "Cancelled", value: "cancelled" },
+        ),
     )
     .addStringOption((option) =>
       option
@@ -34,21 +41,97 @@ module.exports = {
           { name: "Urgent", value: "urgent" },
           { name: "High", value: "high" },
           { name: "Medium", value: "medium" },
-          { name: "Low", value: "low" }
+          { name: "Low", value: "low" },
+        ),
+    )
+    .addStringOption((option) =>
+      option
+        .setName("assignee")
+        .setDescription(
+          "Filter by assignee (search member by name/username/email)",
         )
+        .setAutocomplete(true)
+        .setRequired(false),
     ),
 
-  async execute(interaction) {
+  async autocomplete(interaction, { planeService, channelConfig }) {
+    try {
+      if (!planeService || !channelConfig) {
+        await interaction.respond([]);
+        return;
+      }
+
+      const focused = interaction.options.getFocused(true);
+      if (focused.name !== "assignee") {
+        await interaction.respond([]);
+        return;
+      }
+
+      const members = await planeService.searchProjectMembers(
+        String(focused.value || "").trim(),
+        [],
+        MAX_AUTOCOMPLETE_CHOICES,
+      );
+
+      await interaction.respond(
+        members
+          .map((member) => ({
+            name: formatAutocompleteChoice(member),
+            value: member.id,
+          }))
+          .slice(0, MAX_AUTOCOMPLETE_CHOICES),
+      );
+    } catch (error) {
+      logger.error("Error handling issue assignee autocomplete", error);
+      await interaction.respond([]);
+    }
+  },
+
+  async execute(interaction, { planeService, channelConfig }) {
+    // Check if channel is configured
+    if (!planeService || !channelConfig) {
+      const notConfiguredEmbed = new EmbedBuilder()
+        .setTitle("⚠️ Channel Not Configured")
+        .setDescription(
+          "This channel is not configured for Plane.\n" +
+            "An administrator must use `/plane-setup` to configure this channel first.",
+        )
+        .setColor(0xfbbf24)
+        .setTimestamp();
+
+      await interaction.reply({
+        embeds: [notConfiguredEmbed],
+        ephemeral: true,
+      });
+      return;
+    }
+
     await interaction.deferReply();
 
     try {
       const state = interaction.options.getString("state");
       const priority = interaction.options.getString("priority");
+      const assignee = interaction.options.getString("assignee")?.trim() || "";
+
+      const assigneeInputs = assignee
+        ? assignee
+            .split(",")
+            .map((value) => value.trim())
+            .filter(Boolean)
+        : [];
+      const { assigneeIds, members } =
+        await planeService.resolveProjectAssigneesWithMembers(assigneeInputs);
 
       logger.info("Getting issues command initiated", {
         user: interaction.user.tag,
         guild: interaction.guild?.name,
-        filters: { state, priority },
+        workspace: channelConfig.workspaceSlug,
+        project: channelConfig.projectId,
+        filters: {
+          state,
+          priority,
+          assignee: assigneeIds.length > 0 ? assigneeIds : undefined,
+        },
       });
 
       // Show progress
@@ -65,14 +148,17 @@ module.exports = {
       const response = await planeService.getAllIssues({
         state,
         priority,
+        assigneeIds,
       });
 
       if (!response.results || response.results.length === 0) {
-        logger.info("No issues found", { filters: { state, priority } });
+        logger.info("No issues found", {
+          filters: { state, priority, assignee: assigneeIds },
+        });
         const noIssuesEmbed = new EmbedBuilder()
           .setTitle("📋 No Issues Found")
           .setDescription(
-            "No issues match your criteria. Try different filters or create a new issue."
+            "No issues match your criteria. Try different filters or create a new issue.",
           )
           .setColor(0x6b7280)
           .setTimestamp();
@@ -95,7 +181,11 @@ module.exports = {
       // Add summary field
       issuesEmbed.addFields({
         name: "Summary",
-        value: `Showing ${response.results.length} of ${response.count} issues`,
+        value: `Showing ${response.results.length} of ${response.count} issues${
+          members.length > 0
+            ? ` for ${members.map((member) => member.username || member.email || member.name).join(", ")}`
+            : ""
+        }`,
         inline: false,
       });
 
@@ -104,12 +194,12 @@ module.exports = {
         const issueUrl = getIssueUrl(
           planeService.config.WORKSPACE_SLUG,
           planeService.config.PROJECT_ID,
-          issue.id
+          issue.id,
         );
         const priorityEmoji = getPriorityEmoji(issue.priority);
         const stateText = formatState(
           issue.state_detail?.name,
-          issue.state_detail?.group
+          issue.state_detail?.group,
         );
 
         issuesEmbed.addFields({
@@ -133,7 +223,8 @@ module.exports = {
       const errorEmbed = new EmbedBuilder()
         .setTitle("❌ Failed to Fetch Issues")
         .setDescription(
-          error.message || "An unexpected error occurred while fetching issues."
+          error.message ||
+            "An unexpected error occurred while fetching issues.",
         )
         .setColor(0xdc2626)
         .setTimestamp();
