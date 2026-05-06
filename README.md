@@ -93,12 +93,12 @@ The bot supports connecting different Discord channels to different Plane worksp
 
 ### Admin Commands
 
-| Command | Description | Permission |
-|---------|-------------|------------|
-| `/plane-setup` | Configure a channel with workspace and project | Admin only |
-| `/plane-config` | View current channel's configuration | Everyone |
-| `/plane-remove` | Remove configuration from a channel | Admin only |
-| `/plane-list` | List all configured channels in the server | Admin only |
+| Command         | Description                                    | Permission |
+| --------------- | ---------------------------------------------- | ---------- |
+| `/plane-setup`  | Configure a channel with workspace and project | Admin only |
+| `/plane-config` | View current channel's configuration           | Everyone   |
+| `/plane-remove` | Remove configuration from a channel            | Admin only |
+| `/plane-list`   | List all configured channels in the server     | Admin only |
 
 ### Setup Example
 
@@ -176,13 +176,17 @@ Create a new issue in Plane.
 - `priority` (optional): The priority level (Urgent, High, Medium, Low)
 - `assignee` (optional): First assignee from Plane member autocomplete.
 - `assignee-2` to `assignee-5` (optional): Additional assignees from Plane member autocomplete.
+- `label` (optional): First label from Plane label autocomplete.
+- `label-2` to `label-5` (optional): Additional labels from Plane label autocomplete.
+- `start_date` (optional): Start date for the issue (YYYY-MM-DD)
+- `target_date` (optional): Target date for the issue (YYYY-MM-DD)
 
 When assignees are selected, the bot also tries to auto-mention matching Discord users (by username/display name/email local-part matching).
 
 **Example:**
 
 ```
-/create-issue title: Fix login bug description: Users can't login with Google priority: high assignee: 550e8400-e29b-41d4-a716-446655440000 assignee-2: 662e1f72-f58e-4f7f-a128-2e2fbc4d8ea3
+/create-issue title: Fix login bug description: Users can't login with Google priority: high assignee: 550e8400-e29b-41d4-a716-446655440000 assignee-2: 662e1f72-f58e-4f7f-a128-2e2fbc4d8ea3 label: bug label-2: frontend start_date: 2026-05-10 target_date: 2026-05-20
 ```
 
 #### `/view-issue`
@@ -193,11 +197,12 @@ View detailed information about a specific issue.
 
 - `id` (required): The sequence ID of the issue (e.g., PROJ-123)
 
-**Example:**
+- `assignee` (optional): Filter issues by assignee using Plane member autocomplete
+  **Example:**
 
 ```
 /view-issue id: PROJ-123
-```
+/get-issues state: done priority: high assignee: 550e8400-e29b-41d4-a716-446655440000
 
 #### `/get-issues`
 
@@ -211,7 +216,9 @@ Get a list of issues with optional filters.
 **Example:**
 
 ```
+
 /get-issues state: started priority: high
+
 ```
 
 #### `/upload-file`
@@ -226,7 +233,9 @@ Upload a file to an existing issue.
 **Example:**
 
 ```
+
 /upload-file id: PROJ-123 file: screenshot.png
+
 ```
 
 Supported file types:
@@ -251,7 +260,9 @@ Configure the current channel to use a specific Plane workspace and project. **A
 **Example:**
 
 ```
+
 /plane-setup workspace: acme-corp project: proj_abc123
+
 ```
 
 #### `/plane-config`
@@ -261,7 +272,9 @@ View the current Plane configuration for this channel.
 **Example:**
 
 ```
+
 /plane-config
+
 ```
 
 #### `/plane-remove`
@@ -271,7 +284,9 @@ Remove the Plane configuration from this channel. **Admin only.**
 **Example:**
 
 ```
+
 /plane-remove
+
 ```
 
 #### `/plane-list`
@@ -281,8 +296,10 @@ List all configured channels in this server. **Admin only.**
 **Example:**
 
 ```
+
 /plane-list
-```
+
+````
 
 ## Visual Features
 
@@ -324,7 +341,7 @@ To use SQLite:
 
 ```bash
 npm install better-sqlite3
-```
+````
 
 Then set in `.env`:
 
@@ -454,14 +471,14 @@ The Dockerfile uses Alpine Linux for reliable builds across different environmen
 
 ### Environment Variables for Coolify
 
-| Variable | Required | Default | Description |
-|----------|----------|---------|-------------|
-| `DISCORD_TOKEN` | Yes | - | Discord bot token |
-| `CLIENT_ID` | Yes | - | Discord application client ID |
-| `PLANE_API_KEY` | Yes | - | Plane API key |
-| `STORAGE_TYPE` | No | `json` | Storage backend (`json` or `sqlite`) |
-| `LOG_LEVEL` | No | `info` | Logging level |
-| `ENABLE_FILE_LOGS` | No | `false` | Enable file logging |
+| Variable           | Required | Default | Description                          |
+| ------------------ | -------- | ------- | ------------------------------------ |
+| `DISCORD_TOKEN`    | Yes      | -       | Discord bot token                    |
+| `CLIENT_ID`        | Yes      | -       | Discord application client ID        |
+| `PLANE_API_KEY`    | Yes      | -       | Plane API key                        |
+| `STORAGE_TYPE`     | No       | `json`  | Storage backend (`json` or `sqlite`) |
+| `LOG_LEVEL`        | No       | `info`  | Logging level                        |
+| `ENABLE_FILE_LOGS` | No       | `false` | Enable file logging                  |
 
 > **Important:** Always configure persistent storage for `/usr/src/app/data` to preserve channel configurations across deployments.
 

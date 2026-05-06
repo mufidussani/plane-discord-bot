@@ -7,6 +7,14 @@ const {
   getIssueUrl,
 } = require("../utils/utils");
 
+const MAX_AUTOCOMPLETE_CHOICES = 25;
+
+function formatAutocompleteChoice(member) {
+  const secondary = member.username || member.email || member.id;
+  const label = `${member.name} (${secondary})`;
+  return label.length > 100 ? `${label.slice(0, 97)}...` : label;
+}
+
 module.exports = {
   data: new SlashCommandBuilder()
     .setName("get-issues")
@@ -35,7 +43,49 @@ module.exports = {
           { name: "Medium", value: "medium" },
           { name: "Low", value: "low" },
         ),
+    )
+    .addStringOption((option) =>
+      option
+        .setName("assignee")
+        .setDescription(
+          "Filter by assignee (search member by name/username/email)",
+        )
+        .setAutocomplete(true)
+        .setRequired(false),
     ),
+
+  async autocomplete(interaction, { planeService, channelConfig }) {
+    try {
+      if (!planeService || !channelConfig) {
+        await interaction.respond([]);
+        return;
+      }
+
+      const focused = interaction.options.getFocused(true);
+      if (focused.name !== "assignee") {
+        await interaction.respond([]);
+        return;
+      }
+
+      const members = await planeService.searchProjectMembers(
+        String(focused.value || "").trim(),
+        [],
+        MAX_AUTOCOMPLETE_CHOICES,
+      );
+
+      await interaction.respond(
+        members
+          .map((member) => ({
+            name: formatAutocompleteChoice(member),
+            value: member.id,
+          }))
+          .slice(0, MAX_AUTOCOMPLETE_CHOICES),
+      );
+    } catch (error) {
+      logger.error("Error handling issue assignee autocomplete", error);
+      await interaction.respond([]);
+    }
+  },
 
   async execute(interaction, { planeService, channelConfig }) {
     // Check if channel is configured
@@ -61,13 +111,27 @@ module.exports = {
     try {
       const state = interaction.options.getString("state");
       const priority = interaction.options.getString("priority");
+      const assignee = interaction.options.getString("assignee")?.trim() || "";
+
+      const assigneeInputs = assignee
+        ? assignee
+            .split(",")
+            .map((value) => value.trim())
+            .filter(Boolean)
+        : [];
+      const { assigneeIds, members } =
+        await planeService.resolveProjectAssigneesWithMembers(assigneeInputs);
 
       logger.info("Getting issues command initiated", {
         user: interaction.user.tag,
         guild: interaction.guild?.name,
         workspace: channelConfig.workspaceSlug,
         project: channelConfig.projectId,
-        filters: { state, priority },
+        filters: {
+          state,
+          priority,
+          assignee: assigneeIds.length > 0 ? assigneeIds : undefined,
+        },
       });
 
       // Show progress
@@ -84,10 +148,13 @@ module.exports = {
       const response = await planeService.getAllIssues({
         state,
         priority,
+        assigneeIds,
       });
 
       if (!response.results || response.results.length === 0) {
-        logger.info("No issues found", { filters: { state, priority } });
+        logger.info("No issues found", {
+          filters: { state, priority, assignee: assigneeIds },
+        });
         const noIssuesEmbed = new EmbedBuilder()
           .setTitle("📋 No Issues Found")
           .setDescription(
@@ -114,7 +181,11 @@ module.exports = {
       // Add summary field
       issuesEmbed.addFields({
         name: "Summary",
-        value: `Showing ${response.results.length} of ${response.count} issues`,
+        value: `Showing ${response.results.length} of ${response.count} issues${
+          members.length > 0
+            ? ` for ${members.map((member) => member.username || member.email || member.name).join(", ")}`
+            : ""
+        }`,
         inline: false,
       });
 

@@ -23,9 +23,25 @@ const rest = new REST().setToken(config.DISCORD_TOKEN);
   try {
     console.log("Started refreshing application (/) commands.");
 
-    await rest.put(Routes.applicationCommands(process.env.CLIENT_ID), {
-      body: commands,
-    });
+    // If a GUILD_ID is provided, register commands to that guild for instant propagation.
+    // Otherwise fall back to global commands (may take up to 1 hour to update).
+    if (process.env.GUILD_ID) {
+      console.log("Registering commands to guild:", process.env.GUILD_ID);
+      await rest.put(
+        Routes.applicationGuildCommands(
+          process.env.CLIENT_ID,
+          process.env.GUILD_ID,
+        ),
+        { body: commands },
+      );
+    } else {
+      console.log(
+        "Registering global application commands (may take up to 1 hour to propagate)",
+      );
+      await rest.put(Routes.applicationCommands(process.env.CLIENT_ID), {
+        body: commands,
+      });
+    }
 
     console.log("Successfully reloaded application (/) commands.");
   } catch (error) {

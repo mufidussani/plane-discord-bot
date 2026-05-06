@@ -383,6 +383,84 @@ class PlaneService {
       .filter(Boolean);
   }
 
+  getNormalizedLabels(labelsObj) {
+    // Accept either an object map (from getLabels) or an array
+    if (!labelsObj) return [];
+    if (Array.isArray(labelsObj)) {
+      return labelsObj
+        .map((label) => ({
+          id: label.id,
+          name: label.name || label.title || "",
+        }))
+        .filter((l) => l.id && l.name);
+    }
+
+    return Object.keys(labelsObj).map((id) => ({
+      id,
+      name: labelsObj[id].name,
+    }));
+  }
+
+  async searchProjectLabels(query = "", excludedIds = [], limit = 25) {
+    const labelsMap = await this.getLabels();
+    const labels = this.getNormalizedLabels(labelsMap);
+    const normalizedQuery = String(query || "")
+      .trim()
+      .toLowerCase();
+    const excluded = new Set(excludedIds.map((v) => String(v)));
+
+    return labels
+      .filter((label) => !excluded.has(String(label.id)))
+      .filter((label) => {
+        if (!normalizedQuery) return true;
+        return String(label.name || "")
+          .toLowerCase()
+          .includes(normalizedQuery);
+      })
+      .slice(0, limit);
+  }
+
+  async resolveLabelIdsWithLabels(labelInputs = []) {
+    const inputs = labelInputs
+      .map((v) => String(v || "").trim())
+      .filter(Boolean);
+    if (inputs.length === 0) return { labelIds: [], labels: [] };
+
+    const labelsMap = await this.getLabels();
+    const normalizedLabels = this.getNormalizedLabels(labelsMap);
+    const labelById = new Map(normalizedLabels.map((l) => [String(l.id), l]));
+
+    const resolved = [];
+    const unresolved = [];
+
+    for (const input of inputs) {
+      if (
+        /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+          input,
+        )
+      ) {
+        resolved.push(input);
+        continue;
+      }
+
+      const match = normalizedLabels.find(
+        (l) => String(l.name).toLowerCase() === input.toLowerCase(),
+      );
+      if (match) resolved.push(match.id);
+      else unresolved.push(input);
+    }
+
+    if (unresolved.length > 0) {
+      throw new Error(`Could not resolve label(s): ${unresolved.join(", ")}`);
+    }
+
+    const labelIds = [...new Set(resolved)];
+    const labels = labelIds.map(
+      (id) => labelById.get(String(id)) || { id, name: id },
+    );
+    return { labelIds, labels };
+  }
+
   async searchProjectMembers(query = "", excludedIds = [], limit = 25) {
     const members = this.getNormalizedProjectMembers(
       await this.getProjectMembers(),
@@ -516,12 +594,18 @@ class PlaneService {
    */
   formatIssueData(issue, states, labels) {
     logger.debug("Formatting issue data", { issueId: issue.id });
+    const stateId =
+      typeof issue.state === "object" ? issue.state?.id : issue.state;
     return {
       ...issue,
-      state_detail: states[issue.state] || {
-        name: "Unknown",
-        group: "Unknown",
-      },
+      state_detail:
+        states[stateId] ||
+        (typeof issue.state === "object"
+          ? issue.state
+          : {
+              name: "Unknown",
+              group: "Unknown",
+            }),
       label_details: issue.labels
         .map((id) => labels[id])
         .filter((label) => label),
@@ -539,16 +623,9 @@ class PlaneService {
       ]);
 
       const queryParams = new URLSearchParams({
-        per_page: "10", // Maximum allowed
-        ...filters,
+        per_page: "100", // Maximum allowed
+        order_by: "-created_at",
       });
-      // Add filters if provided
-      if (filters.state)
-        queryParams.append("state__name__icontains", filters.state);
-      if (filters.priority) queryParams.append("priority", filters.priority);
-
-      // Add sorting
-      queryParams.append("order_by", "-created_at"); // Sort by creation date, newest first
 
       const response = await planeApi.get(
         `/workspaces/${this.workspaceSlug}/projects/${this.projectId}/issues/?${queryParams.toString()}`,
@@ -566,12 +643,68 @@ class PlaneService {
         formatted_id: `${project.identifier}-${issue.sequence_id}`,
       }));
 
+      const normalizedFilters = {
+        state: filters.state ? String(filters.state).toLowerCase() : "",
+        priority: filters.priority
+          ? String(filters.priority).toLowerCase()
+          : "",
+        assigneeIds: Array.isArray(filters.assigneeIds)
+          ? filters.assigneeIds.map((value) => String(value))
+          : [],
+      };
+
+      const filteredResults = enhancedResults.filter((issue) => {
+        if (
+          normalizedFilters.state &&
+          String(
+            issue.state_detail?.group || issue.state_detail?.name || "",
+          ).toLowerCase() !== normalizedFilters.state
+        ) {
+          return false;
+        }
+
+        if (
+          normalizedFilters.priority &&
+          String(issue.priority || "").toLowerCase() !==
+            normalizedFilters.priority
+        ) {
+          return false;
+        }
+
+        if (normalizedFilters.assigneeIds.length > 0) {
+          const issueAssigneeIds = Array.isArray(issue.assignees)
+            ? issue.assignees
+                .map((assignee) =>
+                  typeof assignee === "string"
+                    ? assignee
+                    : assignee?.id ||
+                      assignee?.user_id ||
+                      assignee?.userId ||
+                      null,
+                )
+                .filter(Boolean)
+                .map((value) => String(value))
+            : [];
+
+          if (
+            !normalizedFilters.assigneeIds.some((assigneeId) =>
+              issueAssigneeIds.includes(String(assigneeId)),
+            )
+          ) {
+            return false;
+          }
+        }
+
+        return true;
+      });
+
       logger.info("Issues fetched successfully", {
-        count: enhancedResults.length,
+        count: filteredResults.length,
       });
       return {
         ...response.data,
-        results: enhancedResults,
+        count: filteredResults.length,
+        results: filteredResults,
       };
     } catch (error) {
       logger.error("Error fetching all issues", error);
@@ -579,7 +712,15 @@ class PlaneService {
     }
   }
 
-  async createIssue(title, description, priority, assignees = []) {
+  async createIssue(
+    title,
+    description,
+    priority,
+    assignees = [],
+    labels = [],
+    start_date = null,
+    target_date = null,
+  ) {
     try {
       logger.info("Creating new issue", {
         title,
@@ -596,6 +737,11 @@ class PlaneService {
       if (assignees.length > 0) {
         payload.assignees = assignees;
       }
+      if (labels && labels.length > 0) {
+        payload.labels = labels;
+      }
+      if (start_date) payload.start_date = start_date;
+      if (target_date) payload.target_date = target_date;
 
       const response = await planeApi.post(
         `/workspaces/${this.workspaceSlug}/projects/${this.projectId}/issues/`,
