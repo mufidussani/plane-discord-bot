@@ -14,6 +14,7 @@ services:
       - STORAGE_TYPE=${STORAGE_TYPE:-json}
       - LOG_LEVEL=${LOG_LEVEL:-info}
       - ENABLE_FILE_LOGS=${ENABLE_FILE_LOGS:-false}
+      - GUILD_ID=${GUILD_ID:-}
     volumes:
       - plane-bot-data:/usr/src/app/data
     healthcheck:
